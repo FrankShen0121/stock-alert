@@ -1,13 +1,12 @@
 import datetime
 import json
 import os
-import time
 import pytz
 import requests
 import yfinance as yf
 
 # ==========================================
-# 1. 憑證設定 (從環境變數讀取 GitHub Secrets)
+# 1. 憑證與環境設定
 # ==========================================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_TOKEN")
 LINE_USER_ID = os.environ.get("LINE_USER_ID")
@@ -17,7 +16,7 @@ STATE_FILE = "alerted_state.json"
 REPORT_FILE = "report.md"
 
 # ==========================================
-# 2. 39 檔監控股票清單與均線參數
+# 2. 44 檔監控股票清單與均線參數
 # ==========================================
 STOCKS = {
     "1504": {"name": "東元", "ma": 23, "type": ".TW"},
@@ -70,145 +69,165 @@ STOCKS = {
 # ==========================================
 # 3. 狀態讀寫函式 (避免重複推播)
 # ==========================================
-def load_state():
-  today_str = datetime.datetime.now(TW_TZ).strftime("%Y-%m-%d")
-  if os.path.exists(STATE_FILE):
-    try:
-      with open(STATE_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        if data.get("date") == today_str:
-          return set(data.get("alerted", []))
-    except Exception:
-      pass
-  return set()
+def load_state() -> set:
+    today_str = datetime.datetime.now(TW_TZ).strftime("%Y-%m-%d")
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("date") == today_str:
+                    return set(data.get("alerted", []))
+        except Exception:
+            pass
+    return set()
 
 
-def save_state(alerted_set):
-  today_str = datetime.datetime.now(TW_TZ).strftime("%Y-%m-%d")
-  data = {"date": today_str, "alerted": list(alerted_set)}
-  with open(STATE_FILE, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False)
+def save_state(alerted_set: set):
+    today_str = datetime.datetime.now(TW_TZ).strftime("%Y-%m-%d")
+    data = {"date": today_str, "alerted": list(alerted_set)}
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
 # ==========================================
 # 4. LINE 推播函式
 # ==========================================
-def send_line_push(msg_text):
-  url = "https://api.line.me/v2/bot/message/push"
-  headers = {
-      "Content-Type": "application/json",
-      "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-  }
-  payload = {
-      "to": LINE_USER_ID,
-      "messages": [{"type": "text", "text": msg_text}],
-  }
-  try:
-    res = requests.post(url, headers=headers, json=payload, timeout=10)
-    return res.status_code == 200
-  except Exception as e:
-    print(f"LINE 發送失敗: {e}")
-    return False
+def send_line_push(msg_text: str) -> bool:
+    if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
+        print("⚠️ 警告：未設定 LINE_TOKEN 或 LINE_USER_ID，略過推播。")
+        return False
+
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+    }
+    payload = {
+        "to": LINE_USER_ID,
+        "messages": [{"type": "text", "text": msg_text}],
+    }
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        return res.status_code == 200
+    except Exception as e:
+        print(f"❌ LINE 發送失敗: {e}")
+        return False
 
 
 # ==========================================
 # 5. 主執行邏輯與報告生成
 # ==========================================
 def main():
-  now_tw = datetime.datetime.now(TW_TZ)
-  time_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")
-  print(f"[{time_str}] 開始掃描 39 檔台股價格...")
+    now_tw = datetime.datetime.now(TW_TZ)
+    time_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{time_str}] 開始批次下載與掃描 44 檔台股價格...")
 
-  alerted_today = load_state()
+    alerted_today = load_state()
+    scanned_count = 0
+    triggered_list = []
+    error_list = []
 
-  scanned_count = 0
-  triggered_list = []
-  error_list = []
-
-  for code, info in STOCKS.items():
-    ticker_symbol = f"{code}{info['type']}"
-    ma_period = info["ma"]
-    stock_name = info["name"]
+    # 準備批次下載的 ticker 清單
+    ticker_symbols = [f"{code}{info['type']}" for code, info in STOCKS.items()]
 
     try:
-      stock = yf.Ticker(ticker_symbol)
-      df = stock.history(period="60d", interval="1d")
-
-      if len(df) < ma_period + 1:
-        error_list.append(f"{stock_name} ({code}): 歷史資料不足")
-        continue
-
-      yesterday_df = df.iloc[:-1]
-      prev_ma = yesterday_df["Close"].tail(ma_period).mean()
-      threshold_price = round(prev_ma * 1.01, 2)
-
-      current_price = round(df["Close"].iloc[-1], 2)
-      current_vol = int(df["Volume"].iloc[-1] // 1000)
-      yesterday_vol = int(df["Volume"].iloc[-2] // 1000)
-      scanned_count += 1
-
-      is_triggered = current_price >= threshold_price
-
-      if is_triggered and code not in alerted_today:
-        message = (
-            f"📈 【台股均線突破提醒】\n"
-            f"------------------------\n"
-            f"1. 股票名稱 (代號)：{stock_name} ({code})\n"
-            f"2. 當前股價：{current_price} 元\n"
-            f"3. 突破價格 (前日{ma_period}MA x 1.01)：{threshold_price} 元\n"
-            f"4. 成交量資訊：\n"
-            f"   • 當前成交量：{current_vol:,} 張\n"
-            f"   • 昨天成交量：{yesterday_vol:,} 張"
+        # 批次下載歷史資料 (period='60d', threads=True 加速下載)
+        data = yf.download(
+            ticker_symbols, period="60d", interval="1d", group_by="ticker", progress=False, threads=True
         )
-
-        if send_line_push(message):
-          print(f"✅ 成功發送推播：{stock_name} ({code})")
-          alerted_today.add(code)
-          triggered_list.append({
-              "name": stock_name,
-              "code": code,
-              "price": current_price,
-              "threshold": threshold_price,
-          })
-
     except Exception as e:
-      error_list.append(f"{stock_name} ({code}): {e}")
+        print(f"❌ 批次下載 Yahoo Finance 資料失敗: {e}")
+        return
 
-    time.sleep(0.3)
+    for code, info in STOCKS.items():
+        ticker_symbol = f"{code}{info['type']}"
+        ma_period = info["ma"]
+        stock_name = info["name"]
 
-  save_state(alerted_today)
+        try:
+            # 從批次下載結果中萃取單一股票資料
+            if len(ticker_symbols) == 1:
+                df = data
+            else:
+                if ticker_symbol not in data:
+                    error_list.append(f"{stock_name} ({code}): 無法取得市場資料")
+                    continue
+                df = data[ticker_symbol]
 
-  # 生成 Markdown 執行報告
-  report_content = f"""# 📊 台股均線監控系統執行報告
+            # 清除可能存在的 NaN 列
+            df = df.dropna(subset=["Close", "Volume"])
 
-* **最後執行時間**：`{time_str}` (台灣時間)
-* **狀態**：`運行成功`
-* **成功掃描股票數**：`{scanned_count} / {len(STOCKS)}` 檔
+            if len(df) < ma_period + 1:
+                error_list.append(f"{stock_name} ({code}): 歷史資料不足 (僅有 {len(df)} 筆)")
+                continue
+
+            yesterday_df = df.iloc[:-1]
+            prev_ma = yesterday_df["Close"].tail(ma_period).mean()
+            threshold_price = round(float(prev_ma) * 1.01, 2)
+
+            current_price = round(float(df["Close"].iloc[-1]), 2)
+            current_vol = int(df["Volume"].iloc[-1] // 1000)
+            yesterday_vol = int(df["Volume"].iloc[-2] // 1000)
+            scanned_count += 1
+
+            is_triggered = current_price >= threshold_price
+
+            if is_triggered and code not in alerted_today:
+                message = (
+                    f"📈 【台股均線突破提醒】\n"
+                    f"------------------------\n"
+                    f"1. 股票名稱 (代號)：{stock_name} ({code})\n"
+                    f"2. 當前股價：{current_price} 元\n"
+                    f"3. 突破價格 (前日{ma_period}MA x 1.01)：{threshold_price} 元\n"
+                    f"4. 成交量資訊：\n"
+                    f"   • 當前成交量：{current_vol:,} 張\n"
+                    f"   • 昨天成交量：{yesterday_vol:,} 張"
+                )
+
+                if send_line_push(message):
+                    print(f"✅ 成功發送推播：{stock_name} ({code})")
+                    alerted_today.add(code)
+                    triggered_list.append({
+                        "name": stock_name,
+                        "code": code,
+                        "price": current_price,
+                        "threshold": threshold_price,
+                    })
+
+        except Exception as e:
+            error_list.append(f"{stock_name} ({code}): {e}")
+
+    save_state(alerted_today)
+
+    # 生成 Markdown 執行報告
+    report_content = f"""# 📊 台股均線監控系統執行報告
+
+- **最後執行時間**：`{time_str}` (台灣時間)
+- **狀態**：`運行成功`
+- **成功掃描股票數**：`{scanned_count} / {len(STOCKS)}` 檔
 
 ---
 
 ## 🚨 今日觸發突破清單
 """
-  if triggered_list:
-    report_content += (
-        "| 股票名稱 | 代號 | 當前股價 | 突破門檻價 |\n|:---:|:---:|:---:|:---:|\n"
-    )
-    for item in triggered_list:
-      report_content += f"| {item['name']} | {item['code']} | {item['price']} | {item['threshold']} |\n"
-  else:
-    report_content += "*截至目前為止，今日尚無股票達突破條件。*\n"
+    if triggered_list:
+        report_content += "| 股票名稱 | 代號 | 當前股價 | 突破門檻價 |\n|:---:|:---:|:---:|:---:|\n"
+        for item in triggered_list:
+            report_content += f"| {item['name']} | {item['code']} | {item['price']} | {item['threshold']} |\n"
+    else:
+        report_content += "*截至目前為止，今日尚無股票達突破條件。*\n"
 
-  report_content += "\n---\n\n## ⚠️ 異常與錯誤紀錄\n"
-  if error_list:
-    for err in error_list:
-      report_content += f"- {err}\n"
-  else:
-    report_content += "*本次執行無任何錯誤或資料異常。*\n"
+    report_content += "\n---\n\n## ⚠️ 異常與錯誤紀錄\n"
+    if error_list:
+        for err in error_list:
+            report_content += f"- {err}\n"
+    else:
+        report_content += "*本次執行無任何錯誤或資料異常。*\n"
 
-  with open(REPORT_FILE, "w", encoding="utf-8") as f:
-    f.write(report_content)
-  print("📝 執行報告 report.md 已成功生成！")
+    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+        f.write(report_content)
+    print("📝 執行報告 report.md 已成功生成！")
 
 
 if __name__ == "__main__":
-  main()
+    main()
