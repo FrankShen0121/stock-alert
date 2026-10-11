@@ -3,9 +3,12 @@ name: Taiwan Stock Alert
 on:
   schedule:
     # 台灣時間週一至週五，早上 09:00 到下午 13:30，每 5 分鐘執行一次
-    # 對應的 UTC 時間為 01:00 至 05:30
     - cron: '*/5 1-5 * * 1-5'
   workflow_dispatch:  # 允許手動觸發測試
+
+# 賦予 GitHub Actions 寫入倉庫的權限，以便自動上傳 report.md 與狀態檔
+permissions:
+  contents: write
 
 jobs:
   run-alert:
@@ -24,17 +27,17 @@ jobs:
         run: |
           pip install pandas pytz requests yfinance
 
-      - name: Restore alerted state cache
-        uses: actions/cache@v4
-        with:
-          path: alerted_state.json
-          key: stock-state-${{ github.run_id }}
-          restore-keys: |
-            stock-state-
-
       - name: Run stock alert script
         env:
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: |
           python stock_alert.py
+
+      - name: Commit and push report and state
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add report.md alerted_state.json
+          git diff --staged --quiet || git commit -m "Auto-update stock report and state [skip ci]"
+          git push
