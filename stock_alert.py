@@ -13,6 +13,7 @@ LINE_USER_ID = os.environ.get("LINE_USER_ID")
 
 TW_TZ = pytz.timezone("Asia/Taipei")
 STATE_FILE = "alerted_state.json"
+REPORT_FILE = "report.md"
 
 # ==========================================
 # 2. 39 檔監控股票清單與均線參數
@@ -52,14 +53,14 @@ STOCKS = {
     "3008": {"name": "大立光", "ma": 25, "type": ".TW"},
     "3017": {"name": "奇鋐", "ma": 19, "type": ".TW"},
     "3231": {"name": "緯創", "ma": 26, "type": ".TW"},
-    "3450": {"name": "聯鈞", "ma": 20, "type": ".TW"},
+    "3450": {"name": "聯鈞", "ma": 20, "type": ".TWO"},  # 修正為 .TWO
     "3481": {"name": "群創", "ma": 20, "type": ".TW"},
-    "3707": {"name": "漢磊", "ma": 18, "type": ".TWO"},
+    "3707": {"name": "漢磊", "ma": 18, "type": ".TWO"},  # 修正為 .TWO
     "3711": {"name": "日月光投控", "ma": 31, "type": ".TW"},
-    "5347": {"name": "世界", "ma": 28, "type": ".TWO"},
+    "5347": {"name": "世界", "ma": 28, "type": ".TWO"},  # 修正為 .TWO
     "6116": {"name": "彩晶", "ma": 16, "type": ".TW"},
     "6191": {"name": "精成科", "ma": 18, "type": ".TW"},
-    "6284": {"name": "佳邦", "ma": 24, "type": ".TWO"},
+    "6284": {"name": "佳邦", "ma": 24, "type": ".TWO"},  # 修正為 .TWO
     "6443": {"name": "元晶", "ma": 19, "type": ".TW"},
     "8069": {"name": "元太", "ma": 22, "type": ".TWO"},
 }
@@ -110,18 +111,20 @@ def send_line_push(msg_text):
 
 
 # ==========================================
-# 5. 主執行邏輯
+# 5. 主執行邏輯與報告生成
 # ==========================================
 def main():
   now_tw = datetime.datetime.now(TW_TZ)
-  print(f"[{now_tw.strftime('%Y-%m-%d %H:%M:%S')}] 開始掃描 39 檔台股價格...")
+  time_str = now_tw.strftime("%Y-%m-%d %H:%M:%S")
+  print(f"[{time_str}] 開始掃描 39 檔台股價格...")
 
   alerted_today = load_state()
 
-  for code, info in STOCKS.items():
-    if code in alerted_today:
-      continue
+  scanned_count = 0
+  triggered_list = []
+  error_list = []
 
+  for code, info in STOCKS.items():
     ticker_symbol = f"{code}{info['type']}"
     ma_period = info["ma"]
     stock_name = info["name"]
@@ -131,6 +134,7 @@ def main():
       df = stock.history(period="60d", interval="1d")
 
       if len(df) < ma_period + 1:
+        error_list.append(f"{stock_name} ({code}): 歷史資料不足")
         continue
 
       yesterday_df = df.iloc[:-1]
@@ -140,8 +144,11 @@ def main():
       current_price = round(df["Close"].iloc[-1], 2)
       current_vol = int(df["Volume"].iloc[-1] // 1000)
       yesterday_vol = int(df["Volume"].iloc[-2] // 1000)
+      scanned_count += 1
 
-      if current_price >= threshold_price:
+      is_triggered = current_price >= threshold_price
+
+      if is_triggered and code not in alerted_today:
         message = (
             f"📈 【台股均線突破提醒】\n"
             f"------------------------\n"
@@ -156,11 +163,50 @@ def main():
         if send_line_push(message):
           print(f"✅ 成功發送推播：{stock_name} ({code})")
           alerted_today.add(code)
+          triggered_list.append({
+              "name": stock_name,
+              "code": code,
+              "price": current_price,
+              "threshold": threshold_price,
+          })
 
     except Exception as e:
-      print(f"❌ 處理 {code} {stock_name} 時出錯: {e}")
+      error_list.append(f"{stock_name} ({code}): {e}")
+
+    time.sleep(0.3)
 
   save_state(alerted_today)
+
+  # 生成 Markdown 執行報告
+  report_content = f"""# 📊 台股均線監控系統執行報告
+
+* **最後執行時間**：`{time_str}` (台灣時間)
+* **狀態**：`運行成功`
+* **成功掃描股票數**：`{scanned_count} / {len(STOCKS)}` 檔
+
+---
+
+## 🚨 今日觸發突破清單
+"""
+  if triggered_list:
+    report_content += (
+        "| 股票名稱 | 代號 | 當前股價 | 突破門檻價 |\n|:---:|:---:|:---:|:---:|\n"
+    )
+    for item in triggered_list:
+      report_content += f"| {item['name']} | {item['code']} | {item['price']} | {item['threshold']} |\n"
+  else:
+    report_content += "*截至目前為止，今日尚無股票達突破條件。*\n"
+
+  report_content += "\n---\n\n## ⚠️ 異常與錯誤紀錄\n"
+  if error_list:
+    for err in error_list:
+      report_content += f"- {err}\n"
+  else:
+    report_content += "*本次執行無任何錯誤或資料異常。*\n"
+
+  with open(REPORT_FILE, "w", encoding="utf-8") as f:
+    f.write(report_content)
+  print("📝 執行報告 report.md 已成功生成！")
 
 
 if __name__ == "__main__":
