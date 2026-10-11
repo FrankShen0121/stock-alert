@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import time
 import pytz
 import requests
 import yfinance as yf
@@ -53,14 +54,14 @@ STOCKS = {
     "3008": {"name": "大立光", "ma": 25, "type": ".TW"},
     "3017": {"name": "奇鋐", "ma": 19, "type": ".TW"},
     "3231": {"name": "緯創", "ma": 26, "type": ".TW"},
-    "3450": {"name": "聯鈞", "ma": 20, "type": ".TWO"},  # 修正為 .TWO
+    "3450": {"name": "聯鈞", "ma": 20, "type": ".TWO"},
     "3481": {"name": "群創", "ma": 20, "type": ".TW"},
-    "3707": {"name": "漢磊", "ma": 18, "type": ".TWO"},  # 修正為 .TWO
+    "3707": {"name": "漢磊", "ma": 18, "type": ".TWO"},
     "3711": {"name": "日月光投控", "ma": 31, "type": ".TW"},
-    "5347": {"name": "世界", "ma": 28, "type": ".TWO"},  # 修正為 .TWO
+    "5347": {"name": "世界", "ma": 28, "type": ".TWO"},
     "6116": {"name": "彩晶", "ma": 16, "type": ".TW"},
     "6191": {"name": "精成科", "ma": 18, "type": ".TW"},
-    "6284": {"name": "佳邦", "ma": 24, "type": ".TWO"},  # 修正為 .TWO
+    "6284": {"name": "佳邦", "ma": 24, "type": ".TWO"},
     "6443": {"name": "元晶", "ma": 19, "type": ".TW"},
     "8069": {"name": "元太", "ma": 22, "type": ".TWO"},
 }
