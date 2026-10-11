@@ -6,7 +6,7 @@ on:
     - cron: '*/5 1-5 * * 1-5'
   workflow_dispatch:  # 允許手動觸發測試
 
-# 賦予 GitHub Actions 寫入倉庫的權限，以便自動上傳 report.md 與狀態檔
+# 賦予 GitHub Actions 寫入倉庫的權限
 permissions:
   contents: write
 
@@ -34,10 +34,8 @@ jobs:
         run: |
           python stock_alert.py
 
-      - name: Commit and push report and state
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add report.md alerted_state.json
-          git diff --staged --quiet || git commit -m "Auto-update stock report and state [skip ci]"
-          git push origin HEAD:main
+      - name: Automatically commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-update stock report and state [skip ci]"
+          file_pattern: report.md alerted_state.json
