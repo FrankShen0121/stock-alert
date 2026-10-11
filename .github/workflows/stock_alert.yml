@@ -1,0 +1,40 @@
+name: Taiwan Stock Alert
+
+on:
+  schedule:
+    # 台灣時間週一至週五，早上 09:00 到下午 13:30，每 5 分鐘執行一次
+    # 對應的 UTC 時間為 01:00 至 05:30
+    - cron: '*/5 1-5 * * 1-5'
+  workflow_dispatch:  # 允許手動觸發測試
+
+jobs:
+  run-alert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas pytz requests yfinance
+
+      - name: Restore alerted state cache
+        uses: actions/cache@v4
+        with:
+          path: alerted_state.json
+          key: stock-state-${{ github.run_id }}
+          restore-keys: |
+            stock-state-
+
+      - name: Run stock alert script
+        env:
+          LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: |
+          python stock_alert.py
