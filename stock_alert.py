@@ -157,10 +157,16 @@ def main():
             # 清除可能存在的 NaN 列
             df = df.dropna(subset=["Close", "Volume"])
 
-            if len(df) < ma_period + 1:
-                error_list.append(f"{stock_name} ({code}): 歷史資料不足 (僅有 {len(df)} 筆)")
+            # 確保資料長度足夠（需要包含均線期數 + 前 3 天 + 今天，至少 ma_period + 3）
+            min_required = ma_period + 3
+            if len(df) < min_required:
+                error_list.append(f"{stock_name} ({code}): 歷史資料不足 (僅有 {len(df)} 筆，至少需 {min_required} 筆)")
                 continue
 
+            # 計算整體的移動平均線序列
+            df["MA"] = df["Close"].rolling(window=ma_period).mean()
+
+            # 計算突破門檻（昨日 MA * 1.01）
             yesterday_df = df.iloc[:-1]
             prev_ma = yesterday_df["Close"].tail(ma_period).mean()
             threshold_price = round(float(prev_ma) * 1.01, 2)
@@ -168,9 +174,16 @@ def main():
             current_price = round(float(df["Close"].iloc[-1]), 2)
             current_vol = int(df["Volume"].iloc[-1] // 1000)
             yesterday_vol = int(df["Volume"].iloc[-2] // 1000)
-            scanned_count += 1
 
-            is_triggered = current_price >= threshold_price
+            # -------------------------------------------------------------
+            # 新增條件：突破前三天（倒數第 4 天、倒數第 3 天、倒數第 2 天）
+            # 收盤價皆須在當日 MA 之下
+            # -------------------------------------------------------------
+            recent_3days = df.iloc[-4:-1]
+            is_below_ma_3days = all(recent_3days["Close"] < recent_3days["MA"])
+
+            scanned_count += 1
+            is_triggered = (current_price >= threshold_price) and is_below_ma_3days
 
             if is_triggered and code not in alerted_today:
                 message = (
@@ -179,7 +192,8 @@ def main():
                     f"1. 股票名稱 (代號)：{stock_name} ({code})\n"
                     f"2. 當前股價：{current_price} 元\n"
                     f"3. 突破價格 (前日{ma_period}MA x 1.01)：{threshold_price} 元\n"
-                    f"4. 成交量資訊：\n"
+                    f"4. 突破前三天狀態：皆在 {ma_period}MA 之下\n"
+                    f"5. 成交量資訊：\n"
                     f"   • 當前成交量：{current_vol:,} 張\n"
                     f"   • 昨天成交量：{yesterday_vol:,} 張"
                 )
@@ -208,14 +222,14 @@ def main():
 
 ---
 
-## 🚨 今日觸發突破清單
+## 🚨 今日觸發突破清單（含前三天在均線下濾網）
 """
     if triggered_list:
         report_content += "| 股票名稱 | 代號 | 當前股價 | 突破門檻價 |\n|:---:|:---:|:---:|:---:|\n"
         for item in triggered_list:
             report_content += f"| {item['name']} | {item['code']} | {item['price']} | {item['threshold']} |\n"
     else:
-        report_content += "*截至目前為止，今日尚無股票達突破條件。*\n"
+        report_content += "*截至目前為止，今日尚無股票符合突破條件（或未符合前三天在均線下之條件）。*\n"
 
     report_content += "\n---\n\n## ⚠️ 異常與錯誤紀錄\n"
     if error_list:
