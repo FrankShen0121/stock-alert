@@ -176,7 +176,7 @@ def main():
             yesterday_vol = int(df["Volume"].iloc[-2] // 1000)
 
             # -------------------------------------------------------------
-            # 新增條件：突破前三天（倒數第 4 天、倒數第 3 天、倒數第 2 天）
+            # 條件：突破前三天（倒數第 4 天、倒數第 3 天、倒數第 2 天）
             # 收盤價皆須在當日 MA 之下
             # -------------------------------------------------------------
             recent_3days = df.iloc[-4:-1]
@@ -186,34 +186,56 @@ def main():
             is_triggered = (current_price >= threshold_price) and is_below_ma_3days
 
             if is_triggered and code not in alerted_today:
-                message = (
-                    f"📈 【台股均線突破提醒】\n"
-                    f"------------------------\n"
-                    f"1. 股票名稱 (代號)：{stock_name} ({code})\n"
-                    f"2. 當前股價：{current_price} 元\n"
-                    f"3. 突破價格 (前日{ma_period}MA x 1.01)：{threshold_price} 元\n"
-                    f"4. 突破前三天狀態：皆在 {ma_period}MA 之下\n"
-                    f"5. 成交量資訊：\n"
-                    f"   • 當前成交量：{current_vol:,} 張\n"
-                    f"   • 昨天成交量：{yesterday_vol:,} 張"
-                )
-
-                if send_line_push(message):
-                    print(f"✅ 成功發送推播：{stock_name} ({code})")
-                    alerted_today.add(code)
-                    triggered_list.append({
-                        "name": stock_name,
-                        "code": code,
-                        "price": current_price,
-                        "threshold": threshold_price,
-                    })
+                alerted_today.add(code)
+                triggered_list.append({
+                    "name": stock_name,
+                    "code": code,
+                    "price": current_price,
+                    "threshold": threshold_price,
+                    "ma_period": ma_period,
+                    "volume": current_vol,
+                    "yesterday_vol": yesterday_vol
+                })
 
         except Exception as e:
             error_list.append(f"{stock_name} ({code}): {e}")
 
     save_state(alerted_today)
 
-    # 生成 Markdown 執行報告
+    # ==========================================
+    # 6. 組合統一的 LINE 總結訊息並發送（不論有無突破皆發送）
+    # ==========================================
+    line_msg = (
+        f"📊 【台股均線監控執行報告】\n"
+        f"------------------------\n"
+        f"🕒 執行時間：{time_str}\n"
+        f"📈 掃描狀態：成功掃描 {scanned_count} / {len(STOCKS)} 檔\n"
+    )
+
+    if triggered_list:
+        line_msg += f"\n🚨 【今日新觸發突破】({len(triggered_list)} 檔)\n"
+        for item in triggered_list:
+            line_msg += (
+                f"• {item['name']} ({item['code']})\n"
+                f"  - 現價：{item['price']} 元\n"
+                f"  - 門檻 ({item['ma_period']}MA)：{item['threshold']} 元\n"
+                f"  - 成交量：{item['volume']:,} 張\n"
+            )
+    else:
+        line_msg += f"\n📌 狀態：截至目前無新符合突破條件的股票。"
+
+    if error_list:
+        line_msg += f"\n\n⚠️ 異常數：{len(error_list)} 筆"
+
+    # 發送 LINE 總結訊息
+    if send_line_push(line_msg):
+        print("✅ LINE 執行報告推播成功！")
+    else:
+        print("❌ LINE 執行報告推播失敗！")
+
+    # ==========================================
+    # 7. 生成 Markdown 執行報告 (report.md)
+    # ==========================================
     report_content = f"""# 📊 台股均線監控系統執行報告
 
 - **最後執行時間**：`{time_str}` (台灣時間)
