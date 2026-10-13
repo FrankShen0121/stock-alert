@@ -4,9 +4,8 @@ on:
   schedule:
     # 台灣時間週一至週五，早上 09:00 到下午 14:00，每 30 分鐘執行一次 (對應 UTC 01:00 - 06:00)
     - cron: '*/30 1-6 * * 1-5'
-  workflow_dispatch:  # 允許手動觸發測試
+  workflow_dispatch:
 
-# 賦予 GitHub Actions 寫入倉庫的權限
 permissions:
   contents: write
 
